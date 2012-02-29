@@ -30,8 +30,22 @@ namespace flver {
     // vertex buffer
     public Vec[] VertexBuffer;
 
+    // stride of vertex attributes
     public uint VertexAttribStride;
-    public uint[] VertexAttribs;
+
+    // vertex attributes [ v0a0 v0a1 ... v0an v1a0 v1a1 ... v1an v2a0 ... ]
+    public ushort[] VertexAttribs;
+
+    // attrib buffer semantic -> uv attrib buffer
+    // it seems there are 
+    public readonly List<UVVertexAttribBuffer> UVVertexAttribBuffers = new List<UVVertexAttribBuffer>();
+
+    // attrib buffer semantic -> argb attrib buffer
+    // so far 4 semantic values were seen:
+    //  0x03 : seems to be vertex normal information in rgb-part
+    //  0x06, 0x07, 0x0A: color(rgb) + texture blending(a) data
+    //                    0x0A seems to be present always, so it may be tied to the first diffuse texture
+    public readonly Dictionary<uint, ARGBVertexAttribBuffer> ARGBVertexAttribBuffers = new Dictionary<uint, ARGBVertexAttribBuffer>();
 
     public uint Unknown0;
     public uint Unknown1;
@@ -52,19 +66,9 @@ namespace flver {
     public uint MaterialIndex;
     public Material Material;
 
-    public int Tex1_uv_Offset;
-    public int Tex2_uv_Offset;
-    public int TexL_uv_Offset;
-
-    public int Color3_argb_Offset;
-    public int Color6_argb_Offset;
-    public int Color7_argb_Offset;
-    public int ColorA_argb_Offset;
-
     public string Diffuse1TexName;
     public string Diffuse2TexName;
     public string LightmapTexName;
-
     public string Bumpmap1TexName;
     public string Bumpmap2TexName;
 
@@ -122,6 +126,53 @@ namespace flver {
     public uint Unknown2, Unknown3;
   }
 
+  abstract public class VertexAttribBuffer {
+    protected readonly ushort[] vertexAttribs;
+    protected readonly uint vertexAttribStride;
+    protected readonly uint offset;
+
+    protected VertexAttribBuffer(ushort[] vertexAttribs, uint vertexAttribStride, uint offset) {
+      this.vertexAttribs = vertexAttribs;
+      this.vertexAttribStride = vertexAttribStride;
+      this.offset = offset;
+    }
+
+    public ushort GetUShort(uint vertexIndex, uint offset) {
+      return vertexAttribs[vertexIndex * vertexAttribStride + this.offset + offset];
+    }
+    public short GetShort(uint vertexIndex, uint offset) {
+      return (short)GetUShort(vertexIndex, offset);
+    }
+  }
+
+  public class UVVertexAttribBuffer : VertexAttribBuffer {
+    private const float uvDiv = 1024.0f;
+    public UVVertexAttribBuffer(ushort[] vertexAttribs, uint vertexAttribStride, uint offset)
+      : base(vertexAttribs, vertexAttribStride,offset) {
+    }
+
+    public void GetUV(uint vertexIndex, out float u, out float v) {
+      u = (float)GetShort(vertexIndex, 0) / uvDiv;
+      v = (float)GetShort(vertexIndex, 1) / uvDiv;
+    }
+  }
+
+  public class ARGBVertexAttribBuffer : VertexAttribBuffer {
+    public readonly uint Semantic;
+    public ARGBVertexAttribBuffer(ushort[] vertexAttribs, uint vertexAttribStride, uint offset, uint semantic)
+      : base(vertexAttribs, vertexAttribStride, offset) {
+        this.Semantic = semantic;
+    }
+
+    public void GetARGB(uint vertexIndex, out byte a, out byte r, out byte g, out byte b) {
+      uint ar = GetUShort(vertexIndex, 0);
+      uint gb = GetUShort(vertexIndex, 1);
+      a = (byte)(ar >> 8);
+      r = (byte)(ar & 0xff);
+      g = (byte)(gb >> 8);
+      b = (byte)(gb & 0xff);
+    }
+  }
 
   public class FLVERParser {
     private DataStream d;
@@ -222,6 +273,7 @@ namespace flver {
 
     private void UpdateMeshes() {
       foreach (Mesh m in Meshes) {
+
         Material mat = Materials[(int)m.MaterialIndex];
         m.Material = mat;
 
@@ -232,56 +284,45 @@ namespace flver {
         m.Bumpmap2TexName = Texname(MatParam(mat, "g_Bumpmap_2"));
         m.LightmapTexName = Texname(MatParam(mat, "g_Lightmap"));
 
-        m.Tex1_uv_Offset = -1;
-        m.Tex2_uv_Offset = -1;
-        m.TexL_uv_Offset = -1;
-
-        m.Color3_argb_Offset = 2;
-        m.Color6_argb_Offset = -1;
-        m.Color7_argb_Offset = -1;
-        m.ColorA_argb_Offset = -1;
-
         // todo: the following is not very smart ...
         //       could also use ub.Offset-0x0c directly
 
-        List<int> uvidx = new List<int>();
         int ofs = 0;
         VertexDescriptor b = VertexDescriptors[(int)m.VertexDescriptorIndex];
         foreach (VertexStreamDescriptor ub in b.StreamDescriptors) {
           int len = 0;
-          switch (ub.Datatype) {
-            case 0x02:
+          // assert ofs == ub.Offset-0xc, except for ub.Datatype==0x02
+
+          switch (ub.Datatype) {              
+            case 0x02:  // position attribute; already in VertexBuffer, ignore
               break;
 
-            case 0x11:
+            case 0x11:  // bone assignements? ignore
               len = 2;
               break;
 
-            case 0x13:
+            case 0x13:  // argb buffer
+              ARGBVertexAttribBuffer argbvab = new ARGBVertexAttribBuffer(m.VertexAttribs, m.VertexAttribStride, (uint)ofs, ub.Semantic);
+              m.ARGBVertexAttribBuffers[ub.Semantic] = argbvab;
               len = 2;
-              switch (ub.Semantic) {
-                case 0x03: m.Color3_argb_Offset = ofs; break;
-                case 0x06: m.Color6_argb_Offset = ofs; break;
-                case 0x07: m.Color7_argb_Offset = ofs; break;
-                case 0x0a: m.ColorA_argb_Offset = ofs; break;
-                default:
-                  Debug.WriteLine("unknown 0x13 type: {0:X02}", ub.Semantic);
-                  break;
-              }
               break;
 
-            case 0x15:
+            case 0x15:  // uv buffer
+              UVVertexAttribBuffer uvvab = new UVVertexAttribBuffer(m.VertexAttribs, m.VertexAttribStride, (uint)ofs);
+              m.UVVertexAttribBuffers.Add(uvvab);
               len = 2;
-              uvidx.Add(ofs);
               break;
 
-            case 0x16:
+            case 0x16:  // two uv buffers
+              UVVertexAttribBuffer uv0vab = new UVVertexAttribBuffer(m.VertexAttribs, m.VertexAttribStride, (uint)ofs);
+              m.UVVertexAttribBuffers.Add(uv0vab);
+              UVVertexAttribBuffer uv1vab = new UVVertexAttribBuffer(m.VertexAttribs, m.VertexAttribStride, (uint)ofs+2);
+              m.UVVertexAttribBuffers.Add(uv1vab);
               len = 4;
-              uvidx.Add(ofs);
-              uvidx.Add(ofs + 2);
               break;
 
             case 0x1a:
+              // unknown
               len = 4;
               break;
 
@@ -291,11 +332,6 @@ namespace flver {
           }
           ofs += len;
         }
-
-        int uvi = 0;
-        if (m.Diffuse1TexName != null) m.Tex1_uv_Offset = uvidx[uvi++];
-        if (m.Diffuse2TexName != null) m.Tex2_uv_Offset = uvidx[uvi++];
-        if (m.LightmapTexName != null) m.TexL_uv_Offset = uvidx[uvi++];
       }
     }
 
@@ -436,14 +472,14 @@ namespace flver {
         long ofs = mesh.VertexBufferOfs;
         mesh.VertexBuffer = new Vec[mesh.NVertices];
         mesh.VertexAttribStride = (mesh.VertexSize - 12) / 2;
-        mesh.VertexAttribs = new uint[mesh.NVertices * mesh.VertexAttribStride];
+        mesh.VertexAttribs = new ushort[mesh.NVertices * mesh.VertexAttribStride];
 
         uint nv = mesh.NVertices;
         for (uint i = 0; i < nv; ++i) {
           mesh.VertexBuffer[i] = d.ReadVec3(ofs);
 
           for (uint ii = 0; ii < mesh.VertexAttribStride; ++ii) {
-            uint u = d.ReadUShort(ofs + 2 * ii + 12);
+            ushort u = d.ReadUShort(ofs + 2 * ii + 12);
             mesh.VertexAttribs[i * mesh.VertexAttribStride + ii] = u;
           }
 
