@@ -12,7 +12,12 @@ namespace flver {
   public class Texture2D {
     public uint DataOffset, DataLen, Subtype;
     public uint Width, Height;
+    
+    // 0x0000: dxt1, 
+    // 0x0500: dxt5
     public uint Type;
+
+    // big endian!
     public byte[] Data;
     public string Name;
 
