@@ -82,21 +82,24 @@ namespace flver {
     }
 
     public void Dump(TextWriter w) {
-      w.Write("mesh {0} {1:X08} {2:X08} {3:X08} ", GetConfigString(),
-        Unknown0, Unknown1, Unknown2);
+      w.Write("mesh {0} {1:X08} {2:X08} {3:X08} argb#={4} uv#={5} ", GetConfigString(),
+        Unknown0, Unknown1, Unknown2,
+        ARGBVertexAttribBuffers.Count,
+        UVVertexAttribBuffers.Count);
       HelperFns.DumpUInts(Partinfo, w);
       w.WriteLine();
     }
   }
 
   public class MeshFaceSet {
+    public uint Unknown0;
     public uint NIndices;
     public uint IndexBufferOffset;
     public uint[] Indices;
-    public uint Unknown0;
+    public uint Unknown1;
 
     public void Dump(TextWriter w) {
-      w.WriteLine("faceset {0:X08}", Unknown0);
+      w.WriteLine("faceset {0:X08} {1:X08} {2} indices", Unknown0, Unknown1, NIndices);
     }
   }
 
@@ -134,7 +137,8 @@ namespace flver {
     public uint Unknown2;
 
     public void Dump(TextWriter w) {
-      w.WriteLine("part {0:X08} {1:X08} {2:X08} [t={3}, r={4}, s={5}]", Unknown0, Unknown1, Unknown2, Translation, Euler, Scale);
+      w.WriteLine("part {0:X08} {1:X08} {2:X08} [t={3}, r={4}, s={5}] {6}", 
+        Unknown0, Unknown1, Unknown2, Translation, Euler, Scale, Name);
     }
   }
 
@@ -505,11 +509,12 @@ namespace flver {
       foreach (Mesh mesh in Meshes) {
         foreach (MeshFaceSet fs in mesh.FaceSets) {
           //for (uint i = 0; i < mesh.NFaceGroups; ++i) {
-          uint groupnum = od.ReadUInt();
           fs.Unknown0 = od.ReadUInt();
+          fs.Unknown1 = od.ReadUInt();
           fs.NIndices = od.ReadUInt();
           fs.IndexBufferOffset = od.ReadUInt() + dataOffset;
-          ReadUInts("faceinfo[" + mi + "][" + groupnum + "]", 4, dummy);
+          uint nindices2 = od.ReadUInt();
+          od.Skip(3 * 4);
         }
         ++mi;
       }
