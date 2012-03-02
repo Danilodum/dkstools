@@ -13,6 +13,12 @@ namespace flver {
 
   public static class HelperFns {
 
+    public static void DumpUInts(uint[] us, TextWriter w) {
+      foreach (uint u in us) {
+        w.Write("{0:X08} ", u);
+      }
+    }
+
     public static byte[] SwapShortN(byte[] b) {
       byte[] n = new byte[b.Length];
       Array.Copy(b, n, b.Length);
