@@ -5,11 +5,13 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.IO;
+using System.Globalization;
 
 namespace flver {
 
   public class ModelParam {
     public string Name;
+    public string Filename;
     public int InstanceCount;
     public uint Type;
     public uint LocalID;
@@ -55,10 +57,16 @@ namespace flver {
     public void Dump(TextWriter w) {
       int index = 0;
       foreach (ModelParam mp in ModelParams) {
-        w.WriteLine("model      {0:X04} {1,-20} type={2:X04} localid={3:X04} instance-count={4}", index, mp.Name, mp.Type, mp.LocalID, mp.InstanceCount);
+        w.WriteLine("model      {0:X04} {1,-20} type={2:X04} localid={3:X04} instance-count={4} {5}", 
+          index, mp.Name, mp.Type, mp.LocalID, mp.InstanceCount,
+          mp.Filename);
         int iindex = 0;
         foreach (InstanceParam ip in mp.InstanceParams) {
-          w.WriteLine("  instance {0:X04} {1,-20} type={2:X04} localid={3:X04} trafo={4} {5} {6}", iindex, ip.Name, ip.Type, ip.LocalID, ip.Translation, ip.Euler, ip.Scale);
+          w.WriteLine("  instance {0:X04} {1,-20} type={2:X04} localid={3:X04} trafo={4} {5} {6}", iindex, ip.Name, ip.Type, ip.LocalID,
+            ip.Translation.ToString(", ", CultureInfo.InvariantCulture, "+000.000;-000.000"),
+            ip.Euler.ToString(", ", CultureInfo.InvariantCulture, "+000.000;-000.000"),
+            ip.Scale.ToString(", ", CultureInfo.InvariantCulture, "+000.000;-000.000")
+            );
           ++iindex;
         }
         ++index;
@@ -66,7 +74,9 @@ namespace flver {
 
       index = 0;
       foreach (PointParam pp in PointParams) {
-        w.WriteLine("point {0:X04} {1:X04} {2} {3}", index, pp.Id, pp.Pos, pp.Name);
+        w.WriteLine("point {0:X04} {1:X04} {2} {3}", index, pp.Id, 
+          pp.Pos.ToString(", ", CultureInfo.InvariantCulture, "+000.000;-000.000"),
+          pp.Name);
         ++index;
       }
     }
@@ -76,7 +86,7 @@ namespace flver {
       mp.Name = ds.ReadStr(od.Offset + od.ReadUInt());
       mp.Type = od.ReadUInt();
       mp.LocalID = od.ReadUInt();
-      od.ReadUInt(); // filename
+      mp.Filename = ds.ReadStr(od.Offset + od.ReadUInt()); // filename
       mp.InstanceCount = (int)od.ReadUInt();
       ModelParams.Add(mp);
     }
