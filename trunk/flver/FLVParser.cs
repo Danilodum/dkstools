@@ -81,13 +81,23 @@ namespace flver {
         LightmapTexName != null ? "L" : " ");
     }
 
-    //public List<byte[]> vertSample = new List<byte[]>();
+    public void Dump(TextWriter w) {
+      w.Write("mesh {0} {1:X08} {2:X08} {3:X08} ", GetConfigString(),
+        Unknown0, Unknown1, Unknown2);
+      HelperFns.DumpUInts(Partinfo, w);
+      w.WriteLine();
+    }
   }
 
   public class MeshFaceSet {
     public uint NIndices;
     public uint IndexBufferOffset;
     public uint[] Indices;
+    public uint Unknown0;
+
+    public void Dump(TextWriter w) {
+      w.WriteLine("faceset {0:X08}", Unknown0);
+    }
   }
 
   public class Material {
@@ -96,13 +106,36 @@ namespace flver {
     public uint NParams;
     public uint ParamStartIndex;
     public uint Unknown0;
-    public Dictionary<string, string> Params = new Dictionary<string, string>();
+    public Dictionary<string, MaterialParameter> Params = new Dictionary<string, MaterialParameter>();
+
+    public void Dump(TextWriter w) {
+      w.WriteLine("material {0:X08} {1}", Unknown0, MTDName);
+    }
+  }
+
+  public class MaterialParameter {
+    public string Value;
+    public string Name;
+    public float Unknown0, Unknown1;
+    public uint Unknown2, Unknown3;
+
+    public void Dump(TextWriter w) {
+      w.WriteLine("material parameter {0:000.000} {1:000.000} {2:X08} {3:X08} {4}={5}", Unknown0, Unknown1, Unknown2, Unknown3, Name, Value);
+    }
   }
 
   public class Part {
     public string Name;
-    public Vec UnknownZero, UnknownOne;
-    public Vec Unknown0, Unknown1;
+    public Vec Translation;
+    public Vec Euler, Scale;
+    public Vec BBLower, BBUpper;
+    public uint Unknown0;
+    public uint Unknown1;
+    public uint Unknown2;
+
+    public void Dump(TextWriter w) {
+      w.WriteLine("part {0:X08} {1:X08} {2:X08} [t={3}, r={4}, s={5}]", Unknown0, Unknown1, Unknown2, Translation, Euler, Scale);
+    }
   }
 
   public class VertexStreamDescriptor {
@@ -117,13 +150,6 @@ namespace flver {
     public uint NStreamDescriptors;
     public uint Offset;
     public List<VertexStreamDescriptor> StreamDescriptors = new List<VertexStreamDescriptor>();
-  }
-
-  public class MaterialParameter {
-    public string Value;
-    public string Name;
-    public float Unknown0, Unknown1;
-    public uint Unknown2, Unknown3;
   }
 
   abstract public class VertexAttribBuffer {
@@ -191,6 +217,46 @@ namespace flver {
       this.od = new AutoAdvanceDataReader(d);
     }
 
+    public void Dump(TextWriter w) {
+      int i;
+
+      i = 0;
+      foreach (Part part in Parts) {
+        w.Write("part{0:X02} ", i++);
+        part.Dump(w);
+      }
+
+      i=0;
+      foreach (Mesh mesh in Meshes) {
+        w.Write("mesh{0:X02} ", i++);
+        mesh.Dump(w);
+      }
+
+      i = 0;
+      foreach (Mesh mesh in Meshes) {
+        w.Write("mesh{0:X02} ", i++);
+        mesh.Material.Dump(w);
+      }
+
+      i = 0;
+      foreach (Mesh mesh in Meshes) {
+        foreach (MeshFaceSet fs in mesh.FaceSets) {
+          w.Write("mesh{0:X02} ", i);
+          fs.Dump(w);
+        }
+        ++i;
+      }
+
+      i = 0;
+      foreach (Mesh mesh in Meshes) {
+        foreach (MaterialParameter mp in mesh.Material.Params.Values) {
+          w.Write("mesh{0:X02} ", i);
+          mp.Dump(w);
+        }
+        ++i;
+      }
+    }
+
     public static FLVERParser ParseFLVER(string s, bool loaddata = true) {
       FileDataStream fds = new FileDataStream(s);
       FLVERParser p = new FLVERParser(fds);
@@ -204,6 +270,25 @@ namespace flver {
       for (int i = 0; i < n; ++i) {
         list.Add(new T());
       }
+    }
+
+    private uint[] dummy = new uint[100];
+    private void ReadUInts(string name, int n, uint[] skipped = null) {
+      bool dbg = false;
+      for (uint i = 0; i < n; ++i) {
+        uint a = od.ReadUInt();
+        if (skipped != null) {
+          skipped[i] = a;
+        }
+        else if (a != 0) {
+          if (!dbg) {
+            Debug.Write(name);
+          }
+          Debug.Print(" {0:X08}", a);
+          dbg = true;
+        }
+      }
+
     }
 
     public void Parse() {
@@ -255,7 +340,7 @@ namespace flver {
       foreach (Material mat in Materials) {
         for (uint i = 0; i < mat.NParams; ++i) {
           MaterialParameter u = MaterialParameters[(int)(i + mat.ParamStartIndex)];
-          mat.Params[u.Name] = u.Value;
+          mat.Params[u.Name] = u;
         }
       }
     }
@@ -266,9 +351,13 @@ namespace flver {
     }
 
     private string MatParam(Material mat, string pn) {
-      string val = null;
-      mat.Params.TryGetValue(pn, out val);
-      return val;
+      MaterialParameter p = null;
+      if (!mat.Params.TryGetValue(pn, out p)) {
+        return null;
+      }
+      else {
+        return p.Value;
+      }
     }
 
     private void UpdateMeshes() {
@@ -377,33 +466,24 @@ namespace flver {
         mat.NParams = od.ReadUInt();
         mat.ParamStartIndex = od.ReadUInt();
         mat.Unknown0 = od.ReadUInt();
-        od.Skip(3 * 4);
+        ReadUInts("mat", 3); //od.Skip(3 * 4);
       }
     }
 
     private void ParseParts(uint count) {
       foreach (Part p in Parts) {
-        od.Skip(3 * 4);
+        p.Translation = od.ReadVec3(); 
         p.Name = d.ReadUC(od.ReadUInt());
-        p.UnknownZero = od.ReadVec3();
-        od.Skip(4);
-        p.UnknownOne = od.ReadVec3();
-        od.Skip(4);
-        p.Unknown0 = od.ReadVec3();
-        od.Skip(4);
-        p.Unknown1 = od.ReadVec3();
-        od.Skip(4);
-        od.Skip(128 - 20 * 4);
-      }
-    }
+        p.Euler = od.ReadVec3();
+        p.Unknown0 = od.ReadUInt();
+        p.Scale = od.ReadVec3();
+        p.Unknown1 = od.ReadUInt();
+        p.BBLower = od.ReadVec3();
+        p.Unknown2 = od.ReadUInt();
+        p.BBUpper = od.ReadVec3();
 
-    private uint[] dummy = new uint[100];
-    private void ReadUInts(string name, int n, uint[] skipped = null) {
-      for (uint i = 0; i < n; ++i) {
-        uint a = od.ReadUInt();
-        if (skipped != null) {
-          skipped[i] = a;
-        }
+        ReadUInts("parts5", 1); //od.Skip(4);
+        ReadUInts("parts6", (128 - 20 * 4) / 4); //od.Skip(128 - 20 * 4);
       }
     }
 
@@ -426,7 +506,7 @@ namespace flver {
         foreach (MeshFaceSet fs in mesh.FaceSets) {
           //for (uint i = 0; i < mesh.NFaceGroups; ++i) {
           uint groupnum = od.ReadUInt();
-          uint a = od.ReadUInt();
+          fs.Unknown0 = od.ReadUInt();
           fs.NIndices = od.ReadUInt();
           fs.IndexBufferOffset = od.ReadUInt() + dataOffset;
           ReadUInts("faceinfo[" + mi + "][" + groupnum + "]", 4, dummy);
