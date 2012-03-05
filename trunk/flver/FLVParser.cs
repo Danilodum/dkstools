@@ -295,7 +295,7 @@ namespace flver {
 
     }
 
-    public void Parse() {
+    public void ParseHeader() {
       od.Skip(6 + 3 * 2);
       dataOffset = od.ReadUInt();
       od.ReadUInt(); // data size
@@ -332,12 +332,19 @@ namespace flver {
 
       ParseVertexDescriptors();
       ParseMaterialParameters();
+    }
 
+    public void ParseData() {
       ParseFaces();
       ParseVertices();
 
       UpdateMaterials();
-      UpdateMeshes();
+      UpdateMeshes();      
+    }
+
+    public void Parse() {
+      ParseHeader();
+      ParseData();
     }
 
     private void UpdateMaterials() {
