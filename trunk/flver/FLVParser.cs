@@ -47,6 +47,8 @@ namespace flver {
     //                    0x0A seems to be present always, so it may be tied to the first diffuse texture
     public readonly Dictionary<uint, ARGBVertexAttribBuffer> ARGBVertexAttribBuffers = new Dictionary<uint, ARGBVertexAttribBuffer>();
 
+    public BoneWeightVertexAttribBuffer BoneWeightVertexAttribBuffer;
+
     public uint Unknown0;
     public uint Unknown1;
     public uint Unknown2;
@@ -82,10 +84,12 @@ namespace flver {
     }
 
     public void Dump(TextWriter w) {
-      w.Write("mesh {0} {1:X08} {2:X08} {3:X08} argb#={4} uv#={5} ", GetConfigString(),
+      w.Write("meshinfo {0} {1:X08} {2:X08} {3:X08} sz={6:X02} argb#={4} uv#={5} ", GetConfigString(),
         Unknown0, Unknown1, Unknown2,
         ARGBVertexAttribBuffers.Count,
-        UVVertexAttribBuffers.Count);
+        UVVertexAttribBuffers.Count,
+        VertexSize
+        );
       HelperFns.DumpUInts(Partinfo, w);
       w.WriteLine();
     }
@@ -123,7 +127,7 @@ namespace flver {
     public uint Unknown2, Unknown3;
 
     public void Dump(TextWriter w) {
-      w.WriteLine("material parameter {0:000.000} {1:000.000} {2:X08} {3:X08} {4}={5}", Unknown0, Unknown1, Unknown2, Unknown3, Name, Value);
+      w.WriteLine("matparam {0:000.000} {1:000.000} {2:X08} {3:X08} {4}={5}", Unknown0, Unknown1, Unknown2, Unknown3, Name, Value);
     }
   }
 
@@ -137,8 +141,17 @@ namespace flver {
     public uint Unknown2;
 
     public void Dump(TextWriter w) {
-      w.WriteLine("part {0:X08} {1:X08} {2:X08} [t={3}, r={4}, s={5}] {6}", 
-        Unknown0, Unknown1, Unknown2, Translation, Euler, Scale, Name);
+      w.WriteLine("part {0:X08} {1:X08} {2:X08} [t={3}, r={4}, s={5} {7} {8}] {6}", 
+        Unknown0, Unknown1, Unknown2, Translation, Euler, Scale, Name, BBLower, BBUpper);
+    }
+  }
+
+  public class Bone {
+    public uint[] Data;
+
+    public void Dump(TextWriter w) {
+      HelperFns.DumpUInts(Data, w);
+      w.WriteLine();
     }
   }
 
@@ -204,12 +217,26 @@ namespace flver {
     }
   }
 
+  public class BoneWeightVertexAttribBuffer : VertexAttribBuffer {
+    public readonly uint Semantic;
+    public BoneWeightVertexAttribBuffer(ushort[] vertexAttribs, uint vertexAttribStride, uint offset, uint semantic)
+      : base(vertexAttribs, vertexAttribStride, offset) {
+      this.Semantic = semantic;
+    }
+
+    public void GetWeights(uint vertexIndex, out ushort b0, out ushort b1) {
+      b0 = GetUShort(vertexIndex, 0);
+      b1 = GetUShort(vertexIndex, 1);
+    }
+  }
+
   public class FLVERParser {
     private DataStream d;
     private AutoAdvanceDataReader od;
     private uint dataOffset;
     public bool LoadData = true;
 
+    public List<Bone> Bones = new List<Bone>();
     public List<Mesh> Meshes = new List<Mesh>();
     public List<Part> Parts = new List<Part>();
     public List<VertexDescriptor> VertexDescriptors = new List<VertexDescriptor>();
@@ -225,12 +252,18 @@ namespace flver {
       int i;
 
       i = 0;
+      foreach (Bone bone in Bones) {
+        w.Write("bone{0:X02} ", i++);
+        bone.Dump(w);
+      }
+
+      i = 0;
       foreach (Part part in Parts) {
         w.Write("part{0:X02} ", i++);
         part.Dump(w);
       }
 
-      i=0;
+      i = 0;
       foreach (Mesh mesh in Meshes) {
         w.Write("mesh{0:X02} ", i++);
         mesh.Dump(w);
@@ -257,6 +290,29 @@ namespace flver {
           w.Write("mesh{0:X02} ", i);
           mp.Dump(w);
         }
+        ++i;
+      }
+
+      uint[] bacount = new uint[255];
+      i = 0;
+      foreach (Mesh mesh in Meshes) {
+        for (uint v = 0; v < mesh.NVertices; ++v) {
+          ushort w0, w1;
+          mesh.BoneWeightVertexAttribBuffer.GetWeights(v, out w0, out w1);
+
+          bacount[w0 & 0xFF]++;
+          bacount[w0 >> 8]++;
+          bacount[w1 & 0xFF]++;
+          bacount[w1 >> 8]++;
+        }
+
+        w.Write("mesh{0:X02} boneasn ", i);
+        for (int j = 0; j < bacount.Length; ++j) {
+          if (bacount[j] > 0) {
+            w.Write("{0:X02}:{1}  ", j, bacount[j]);
+          }
+        }
+        w.WriteLine();
         ++i;
       }
     }
@@ -315,6 +371,7 @@ namespace flver {
       uint nvertdescs = od.ReadUInt();
       uint nmatparams = od.ReadUInt();
 
+      for (uint i = 0; i < nbones; ++i) Bones.Add(new Bone());
       for (uint i = 0; i < nmesh; ++i) Meshes.Add(new Mesh());
       for (uint i = 0; i < nmaterials; ++i) Materials.Add(new Material());
       for (uint i = 0; i < nparts; ++i) Parts.Add(new Part());
@@ -397,7 +454,8 @@ namespace flver {
             case 0x02:  // position attribute; already in VertexBuffer, ignore
               break;
 
-            case 0x11:  // bone assignements? ignore
+            case 0x11:  // bone assignments?
+              m.BoneWeightVertexAttribBuffer = new BoneWeightVertexAttribBuffer(m.VertexAttribs, m.VertexAttribStride, (uint)ofs, ub.Semantic);
               len = 2;
               break;
 
@@ -467,7 +525,13 @@ namespace flver {
 
     private void ParseBones(uint nbones) {
       // todo
-      od.Skip(nbones * 64);
+      foreach (Bone b in Bones) {
+        b.Data = new uint[16];
+        for (int i = 0; i < b.Data.Length; ++i) {
+          b.Data[i] = od.ReadUInt();
+        }
+      }
+      //od.Skip(nbones * 64);
     }
 
     private void ParseMaterials() {

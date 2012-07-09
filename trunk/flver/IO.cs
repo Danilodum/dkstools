@@ -19,6 +19,16 @@ namespace flver {
       }
     }
 
+    public static byte[] MaskN(byte[] b, byte[] mask) {
+      byte[] n = new byte[b.Length];
+      Array.Copy(b, n, b.Length);
+      for (int i = 0; i < n.Length; ++i) {
+        int mod = i % mask.Length;
+        n[i] = (byte)(n[i] * mask[mod]);
+      }
+      return n;
+    }
+
     public static byte[] SwapShortN(byte[] b) {
       byte[] n = new byte[b.Length];
       Array.Copy(b, n, b.Length);
@@ -26,9 +36,25 @@ namespace flver {
       return n;
     }
 
+    public static byte[] SwapIntN(byte[] b) {
+      byte[] n = new byte[b.Length];
+      Array.Copy(b, n, b.Length);
+      SwapInt(n);
+      return n;
+    }
+
     public static void SwapShort(byte[] b) {
       for (int i = 0; i < b.Length / 2; ++i) {
-        Swap(b, i * 2, i * 2 + 1);
+        int k = i * 2;
+        Swap(b, k + 0, k + 1);
+      }
+    }
+
+    public static void SwapInt(byte[] b) {
+      for (int i = 0; i < b.Length / 4; ++i) {
+        int k = i * 4;
+        Swap(b, k + 0, k + 3);
+        Swap(b, k + 1, k + 2);
       }
     }
 
