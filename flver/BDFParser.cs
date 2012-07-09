@@ -5,7 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.IO;
-using zlib;
+using ComponentAce.Compression.Libs.zlib;
 
 namespace flver {
 
@@ -13,18 +13,19 @@ namespace flver {
     public TextWriter w = Console.Out;
 
     // database for matching bhf's to bdf's
-    private BDFDB bdfdb = new BDFDB();
+    public readonly BDFDB bdfdb = new BDFDB();
 
-    private void ParseBHF(string s) {
+    public BHFParser ParseBHF(string s) {
       FileDataStream fds = new FileDataStream(s);
       BHFParser p = new BHFParser(Path.GetFileNameWithoutExtension(s), fds);
       p.DB = bdfdb;
       p.w = w;
       p.Parse();
       fds.Close();
+      return p;
     }
 
-    private void ParseBDF(string s, bool extract = true) {
+    public void ParseBDF(string s, bool extract = true) {
       FileDataStream fds = new FileDataStream(s);
       BDFParser p = new BDFParser(Path.GetFileNameWithoutExtension(s), fds);
       p.DB = bdfdb;
@@ -59,6 +60,7 @@ namespace flver {
   }
 
   public class BDF {
+    public string Filename;
     public readonly List<BDFEntry> Entries = new List<BDFEntry>();
   }
 
@@ -70,6 +72,7 @@ namespace flver {
     private string name;
     public TextWriter w = Console.Out;
     public BDFDB DB;
+    public BDF bdf;
 
     private DataStream ds;
 
@@ -80,7 +83,8 @@ namespace flver {
 
     public void Parse() {
       uint count = ds.ReadUInt(4 * 4);
-      BDF bdf = new BDF();
+      bdf = new BDF();
+      bdf.Filename = name;
       for (uint i = 0; i < count; ++i) {
         BDFEntry be = new BDFEntry();
         be.Index = (int)i;
@@ -109,6 +113,7 @@ namespace flver {
     }
 
     public void Parse() {
+      string outdir = Path.GetFullPath("bdfout__");
       long off = 0;
       int index = 0;
 
@@ -171,7 +176,7 @@ namespace flver {
 
           int hdrsz = 0;
 
-          string dest = Path.GetFileName(be.Name);
+          string dest = be.Name;
           if (!be.Name.Contains('.')) {
 
             // decompress/read first 3 bytes from file for guessing extension
@@ -194,7 +199,21 @@ namespace flver {
             name, be.Index, be.Offset, be.Size, be.ZSizeBHF, be.ZSizeBDF, be.ZSizeBHF - be.ZSizeBDF, be.Name, dest);
 
           if (Extract) {
-            using (FileStream fs = new FileStream("bdfout\\" + dest, FileMode.CreateNew, FileAccess.Write)) {
+
+            if (dest.StartsWith("\\")) dest = dest.Substring(1);
+            string filename1 = Path.Combine(outdir, dest);
+            string dirname = Path.GetDirectoryName(filename1);
+            if (!Directory.Exists(dirname)) {
+              Directory.CreateDirectory(dirname);
+            }
+
+            int tryn=0;
+            string filename = filename1;
+            while (File.Exists(filename)) {
+              filename = filename1 + string.Format("_ovr-{0:00}", tryn++);
+            }
+
+            using (FileStream fs = new FileStream(filename, FileMode.CreateNew, FileAccess.Write)) {
               int r = 0;
               // write first 3 bytes 
               fs.Write(fcbuffer, 0, hdrsz);
@@ -202,7 +221,13 @@ namespace flver {
               do {
                 r = zis.Read(fcbuffer, 0, fcbuffer.Length);
                 sz += r;
-                if (r > 0) {
+
+                if (sz > be.Size) {
+                  r -= sz - (int)be.Size;
+                  fs.Write(fcbuffer, 0, r);
+                  r = 0;
+                }
+                else if (r > 0) {
                   fs.Write(fcbuffer, 0, r);
                 }
               } while (r > 0);
